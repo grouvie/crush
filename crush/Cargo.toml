@@ -1,0 +1,29 @@
+[package]
+name = "crush"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+chrono.workspace = true
+
+futures.workspace = true
+
+http-body-util.workspace = true
+
+hyper = { workspace = true, features = ["server", "http1"] }
+
+hyper-tungstenite.workspace = true
+
+hyper-util = { workspace = true, features = ["tokio"] }
+
+rust-ocpp = { workspace = true, features = ["v1_6"] }
+
+thiserror.workspace = true
+
+tokio = { workspace = true, features = ["macros", "sync", "net"] }
+
+tracing.workspace = true
+
+[lints]
+workspace = true
