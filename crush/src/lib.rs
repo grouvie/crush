@@ -1,55 +1,34 @@
-use rust_ocpp::v1_6::messages::{
-    boot_notification::{BootNotificationRequest, BootNotificationResponse},
-    heart_beat::{HeartbeatRequest, HeartbeatResponse},
+use rust_ocpp::v1_6::messages::start_transaction::{
+    StartTransactionRequest, StartTransactionResponse,
 };
+
 use std::net::SocketAddr;
 use tokio::task::{JoinError, JoinHandle};
+
+pub use chrono;
+pub use error::OcppResponseError;
+pub use error::OcppResult;
+pub use messages::{
+    boot_notification::HandleBootNotificationRequest, heartbeat::HandleHeartbeatRequest,
+    status_notification::HandleStatusNotificationRequest,
+};
+pub use rust_ocpp;
 
 mod accept_loop;
 mod client_loop;
 mod controller_loop;
 mod error;
+mod messages;
+mod serde;
 mod server_loop;
 
 use accept_loop::AcceptHandle;
-pub use chrono;
 use controller_loop::ControllerHandle;
-pub use rust_ocpp;
 use server_loop::ServerHandle;
 
-pub trait HandleHeartbeatRequest {
-    fn handle(&self, request: HeartbeatRequest) -> HeartbeatResponse;
+pub trait HandleStartTransactionRequest {
+    fn handle(&self, request: StartTransactionRequest) -> StartTransactionResponse;
 }
-
-pub trait HandleBootNotificationRequest {
-    fn handle(&self, request: BootNotificationRequest) -> BootNotificationResponse;
-}
-
-/*
-struct DefaultHeartbeatHandler;
-
-impl HandleHeartbeatRequest for DefaultHeartbeatHandler {
-    fn handle(&self, _request: HeartbeatRequest) -> HeartbeatResponse {
-        let current_time = Utc::now();
-        HeartbeatResponse { current_time }
-    }
-}
-
-struct DefaultBootNotificationHandler;
-
-impl HandleBootNotificationRequest for DefaultBootNotificationHandler {
-    fn handle(&self, _request: BootNotificationRequest) -> BootNotificationResponse {
-        let current_time = Utc::now();
-        let interval = 60;
-        let status = RegistrationStatus::Accepted;
-        BootNotificationResponse {
-            current_time,
-            interval,
-            status,
-        }
-    }
-}
-*/
 
 #[derive(Clone)]
 pub struct Config {
@@ -93,6 +72,7 @@ pub struct CrushBuilder {
     config: Config,
     heartbeat_handler: Option<Box<dyn HandleHeartbeatRequest + Send + Sync>>,
     boot_notification_handler: Option<Box<dyn HandleBootNotificationRequest + Send + Sync>>,
+    status_notification_handler: Option<Box<dyn HandleStatusNotificationRequest + Send + Sync>>,
 }
 
 impl CrushBuilder {
@@ -110,6 +90,7 @@ impl CrushBuilder {
             config,
             heartbeat_handler: None,
             boot_notification_handler: None,
+            status_notification_handler: None,
         }
     }
 
@@ -162,8 +143,11 @@ impl CrushBuilder {
     /// ```
     #[must_use]
     pub fn build(self) -> Crush {
-        let controller_handle =
-            ControllerHandle::new(self.heartbeat_handler, self.boot_notification_handler);
+        let controller_handle = ControllerHandle::new(
+            self.heartbeat_handler,
+            self.boot_notification_handler,
+            self.status_notification_handler,
+        );
 
         let (server_handle, server_join) = ServerHandle::new(controller_handle.clone());
 

@@ -5,6 +5,8 @@ edition = "2021"
 
 
 [dependencies]
+async-trait.workspace = true
+
 chrono.workspace = true
 
 futures.workspace = true
@@ -18,6 +20,10 @@ hyper-tungstenite.workspace = true
 hyper-util = { workspace = true, features = ["tokio"] }
 
 rust-ocpp = { workspace = true, features = ["v1_6"] }
+
+serde = { workspace = true, features = ["serde_derive"] }
+
+serde_json.workspace = true
 
 thiserror.workspace = true
 

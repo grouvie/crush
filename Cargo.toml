@@ -7,6 +7,8 @@ resolver = "2"
 [workspace.metadata]
 
 [workspace.dependencies]
+async-trait = "0.1.83"
+
 chrono = "0.4.38"
 
 futures = "0.3.31"
@@ -20,6 +22,10 @@ hyper-tungstenite = "0.15.0"
 hyper-util = "0.1.10"
 
 rust-ocpp = "2.0.0"
+
+serde = "1.0.215"
+
+serde_json = "1.0.133"
 
 thiserror = "2.0.3"
 

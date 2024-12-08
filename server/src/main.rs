@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use async_trait::async_trait;
 use crush::{
     chrono::Utc,
     rust_ocpp::v1_6::{
@@ -9,36 +10,41 @@ use crush::{
         },
         types::RegistrationStatus,
     },
-    Config, CrushBuilder, HandleBootNotificationRequest, HandleHeartbeatRequest,
+    Config, CrushBuilder, HandleBootNotificationRequest, HandleHeartbeatRequest, OcppResult,
 };
 use tracing::{subscriber, Level};
 use tracing_subscriber::FmtSubscriber;
 
 struct MyHeartbeatHandler;
 
+#[async_trait]
 impl HandleHeartbeatRequest for MyHeartbeatHandler {
-    fn handle(&self, request: HeartbeatRequest) -> HeartbeatResponse {
+    async fn handle(&self, request: HeartbeatRequest) -> OcppResult<HeartbeatResponse> {
         tracing::info!("Handling: {request:#?}");
         let current_time = Utc::now();
-        HeartbeatResponse { current_time }
+        Ok(HeartbeatResponse { current_time })
     }
 }
 
 struct MyBootNotificationHandler;
 
+#[async_trait]
 impl HandleBootNotificationRequest for MyBootNotificationHandler {
-    fn handle(&self, request: BootNotificationRequest) -> BootNotificationResponse {
+    async fn handle(
+        &self,
+        request: BootNotificationRequest,
+    ) -> OcppResult<BootNotificationResponse> {
         tracing::info!("Handling: {request:#?}");
 
         let current_time = Utc::now();
         let interval = 30;
         let status = RegistrationStatus::Accepted;
 
-        BootNotificationResponse {
+        Ok(BootNotificationResponse {
             current_time,
             interval,
             status,
-        }
+        })
     }
 }
 
