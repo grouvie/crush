@@ -1,12 +1,16 @@
-use rust_ocpp::v1_6::messages::{
-    boot_notification::BootNotificationRequest, heart_beat::HeartbeatRequest,
+use crate::{
+    error::{CrushResult, IntoOcppRequestMessage},
+    messages::{
+        boot_notification::DefaultBootNotificationHandler, heartbeat::DefaultHeartbeatHandler,
+        status_notification::DefaultStatusNotificationHandler,
+    },
+    serde::{OcppRequest, OcppRequestMessage, OcppResponseMessage},
+    HandleBootNotificationRequest, HandleHeartbeatRequest, HandleStatusNotificationRequest,
 };
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     oneshot,
 };
-
-use crate::{error::CrushResult, HandleBootNotificationRequest, HandleHeartbeatRequest};
 
 pub(crate) enum ToController {
     Message(String, oneshot::Sender<String>),
@@ -16,6 +20,7 @@ struct Controller {
     receiver: Receiver<ToController>,
     heartbeat_handler: Option<Box<dyn HandleHeartbeatRequest + Send + Sync>>,
     boot_notification_handler: Option<Box<dyn HandleBootNotificationRequest + Send + Sync>>,
+    status_notification_handler: Option<Box<dyn HandleStatusNotificationRequest + Send + Sync>>,
 }
 
 impl Controller {
@@ -23,57 +28,79 @@ impl Controller {
         receiver: Receiver<ToController>,
         heartbeat_handler: Option<Box<dyn HandleHeartbeatRequest + Send + Sync>>,
         boot_notification_handler: Option<Box<dyn HandleBootNotificationRequest + Send + Sync>>,
+        status_notification_handler: Option<Box<dyn HandleStatusNotificationRequest + Send + Sync>>,
     ) -> Self {
         Self {
             receiver,
             heartbeat_handler,
             boot_notification_handler,
+            status_notification_handler,
         }
     }
-
-    fn handle_message(&self, msg: ToController) {
+    async fn handle_message(&self, msg: ToController) -> CrushResult<()> {
         match msg {
             ToController::Message(message, sender) => {
-                tracing::info!("{message}");
-                // Use the heartbeat handler
-
-                /*
-                I want to use one handler for each ocpp message in here
-                HeartBeat,
-                BootNotification,
-                Authorize,
-                MeterValues
-                StartTransaction
-                ...
-                 */
-
-                let heartbeat_request = HeartbeatRequest {};
-                if let Some(heartbeat_handler) = &self.heartbeat_handler {
-                    let heartbeat_response = heartbeat_handler.handle(heartbeat_request);
-                    tracing::info!("{heartbeat_response:?}");
-                } else {
-                    tracing::info!("Heartbeat Unsupported");
-                }
-                let boot_notification_request = BootNotificationRequest {
-                    charge_box_serial_number: None,
-                    charge_point_model: "Grouvie Model".to_owned(),
-                    charge_point_serial_number: None,
-                    charge_point_vendor: "Grouvie Vendor".to_owned(),
-                    firmware_version: None,
-                    iccid: None,
-                    imsi: None,
-                    meter_serial_number: None,
-                    meter_type: None,
+                let ocpp_request = match serde_json::from_str::<OcppRequest>(&message) {
+                    Ok(ocpp_request) => ocpp_request,
+                    Err(error) => {
+                        tracing::error!(
+                            "Failed to deserialize OcppRequest: {error}. \n Input: \n {message}"
+                        );
+                        return Ok(());
+                    }
                 };
-                if let Some(boot_notification_handler) = &self.boot_notification_handler {
-                    let boot_notification_response =
-                        boot_notification_handler.handle(boot_notification_request);
-                    tracing::info!("{boot_notification_response:?}");
+
+                let uuid = ocpp_request.uuid;
+                let payload = ocpp_request.payload;
+
+                let ocpp_response_message = self.process(payload).await;
+
+                let response = ocpp_response_message.serialize_with_params(3, &uuid)?;
+                drop(sender.send(response));
+            }
+        }
+        Ok(())
+    }
+    async fn process(&self, msg: OcppRequestMessage) -> OcppResponseMessage {
+        match msg {
+            OcppRequestMessage::StatusNotification(request) => {
+                if let Some(handler) = &self.status_notification_handler {
+                    match handler.handle(request).await {
+                        Ok(response) => OcppResponseMessage::StatusNotification(response),
+                        Err(error) => error.into_ocpp_response(),
+                    }
                 } else {
-                    tracing::info!("BootNotification Unsupported");
+                    match DefaultStatusNotificationHandler.handle(request).await {
+                        Ok(response) => OcppResponseMessage::StatusNotification(response),
+                        Err(error) => error.into_ocpp_response(),
+                    }
                 }
-                // Additional logic for boot_notification and other handlers can go here
-                drop(sender.send("Response".to_owned()));
+            }
+            OcppRequestMessage::BootNotification(request) => {
+                if let Some(handler) = &self.boot_notification_handler {
+                    match handler.handle(request).await {
+                        Ok(response) => OcppResponseMessage::BootNotification(response),
+                        Err(error) => error.into_ocpp_response(),
+                    }
+                } else {
+                    match DefaultBootNotificationHandler.handle(request).await {
+                        Ok(response) => OcppResponseMessage::BootNotification(response),
+                        Err(error) => error.into_ocpp_response(),
+                    }
+                }
+            }
+            OcppRequestMessage::Heartbeat(request) => {
+                if let Some(handler) = &self.heartbeat_handler {
+                    match handler.handle(request).await {
+                        Ok(response) => OcppResponseMessage::Heartbeat(response),
+                        Err(error) => error.into_ocpp_response(),
+                    }
+                } else {
+                    match DefaultHeartbeatHandler.handle(request).await {
+                        Ok(response) => OcppResponseMessage::Heartbeat(response),
+                        Err(error) => error.into_ocpp_response(),
+                    }
+                }
             }
         }
     }
@@ -81,7 +108,9 @@ impl Controller {
 
 async fn run_controller(mut controller_actor: Controller) -> CrushResult<()> {
     while let Some(msg) = controller_actor.receiver.recv().await {
-        controller_actor.handle_message(msg);
+        if let Err(error) = controller_actor.handle_message(msg).await {
+            tracing::error!("{error}");
+        };
     }
     Ok(())
 }
@@ -95,11 +124,17 @@ impl ControllerHandle {
     pub(crate) fn new(
         heartbeat_handler: Option<Box<dyn HandleHeartbeatRequest + Send + Sync>>,
         boot_notification_handler: Option<Box<dyn HandleBootNotificationRequest + Send + Sync>>,
+        status_notification_handler: Option<Box<dyn HandleStatusNotificationRequest + Send + Sync>>,
     ) -> Self {
         let (sender, receiver) = channel(64);
 
         tokio::spawn(async move {
-            let actor = Controller::new(receiver, heartbeat_handler, boot_notification_handler);
+            let actor = Controller::new(
+                receiver,
+                heartbeat_handler,
+                boot_notification_handler,
+                status_notification_handler,
+            );
             if let Err(error) = run_controller(actor).await {
                 tracing::error!("{error}");
             };

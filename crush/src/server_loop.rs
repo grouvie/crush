@@ -17,7 +17,7 @@ use tokio::{
 use crate::{
     client_loop::{ClientHandle, ToClient},
     controller_loop::{ControllerHandle, ToController},
-    error::CrushResult,
+    error::{CrushError, CrushResult},
 };
 
 pub(crate) enum ToServer {
@@ -50,14 +50,20 @@ impl Server {
                 drop(self.clients.remove(&id));
             }
             ToServer::ClientMessage(id, message) => {
-                tracing::info!("{message}");
-
                 if let Some(client_handle) = self.clients.get_mut(&id) {
                     let (sender, receiver) = oneshot::channel();
                     let to_controller = ToController::Message(message, sender);
                     self.controller_handle.send(to_controller).await;
 
-                    let response = receiver.await?;
+                    let response = match receiver.await {
+                        Ok(response) => response,
+                        Err(error) => {
+                            tracing::error!(
+                                "Failed to receive answer from controller_loop: {error}"
+                            );
+                            return Ok(());
+                        }
+                    };
 
                     let to_client = ToClient::Message(response);
 
@@ -71,7 +77,9 @@ impl Server {
 
 async fn run_server(mut server_actor: Server) -> CrushResult<()> {
     while let Some(msg) = server_actor.receiver.recv().await {
-        server_actor.handle_message(msg).await?;
+        if let Err(error) = server_actor.handle_message(msg).await {
+            tracing::error!("{error}");
+        };
     }
     Ok(())
 }
